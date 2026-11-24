@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call-to-Site-Visit Lead Card (prototype for Huvo AI)</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1d1d1b; --mute:#6b6b66; --line:#e4e3de; --hot:#c2410c; --warm:#b45309; --cold:#475569; --ok:#15803d; --accent:#1d4ed8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; color:var(--ink); background:var(--bg); }
+  header { padding:28px 24px 8px; max-width:1100px; margin:auto; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  header p { margin:0; color:var(--mute); max-width:760px; }
+  main { max-width:1100px; margin:auto; padding:16px 24px 48px; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.4fr); gap:20px; }
+  @media (max-width:860px){ main{ grid-template-columns:1fr; } }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  h2 { font-size:15px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.04em; color:var(--mute); }
+  button { font:inherit; border:1px solid var(--accent); background:var(--accent); color:#fff; border-radius:6px; padding:7px 12px; cursor:pointer; }
+  button.ghost { background:#fff; color:var(--accent); }
+  .events { list-style:none; padding:0; margin:0 0 12px; }
+  .events li { border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin-bottom:6px; font-family:ui-monospace,Menlo,monospace; font-size:12.5px; }
+  .log { font-family:ui-monospace,Menlo,monospace; font-size:12.5px; background:#fafaf8; border:1px dashed var(--line); border-radius:6px; padding:8px 10px; min-height:60px; white-space:pre-wrap; }
+  .lead { border:1px solid var(--line); border-radius:8px; padding:14px; margin-bottom:14px; }
+  .lead-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .badge { font-size:12px; font-weight:600; padding:3px 9px; border-radius:999px; color:#fff; }
+  .Hot{ background:var(--hot);} .Warm{ background:var(--warm);} .Cold{ background:var(--cold);}
+  table { width:100%; border-collapse:collapse; margin:10px 0; font-size:14px; }
+  td { border-top:1px solid var(--line); padding:5px 4px; vertical-align:top; }
+  td:first-child { color:var(--mute); width:38%; }
+  .review { color:var(--hot); font-size:12px; font-weight:600; margin-left:6px; }
+  .why { font-size:13px; color:var(--mute); margin:4px 0 10px; }
+  .wa { background:#e7f6ec; border-radius:8px; padding:10px 12px; font-size:14px; white-space:pre-wrap; }
+  textarea { width:100%; min-height:120px; font:inherit; border:1px solid var(--line); border-radius:6px; padding:8px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  details { margin-top:10px; font-size:13px; color:var(--mute); }
+  footer { max-width:1100px; margin:auto; padding:0 24px 40px; color:var(--mute); font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Call-to-Site-Visit Lead Card</h1>
+  <p>A small prototype I tried for a real-estate AI voice agent: when a call ends, turn the transcript into a structured lead card a sales manager can act on in 10 seconds (budget, configuration, locality, site-visit slot), score it, and draft the WhatsApp follow-up. Call-ended webhooks are processed idempotently, so a redelivered event never creates a duplicate lead or a second WhatsApp message. All data here is mock data.</p>
+</header>
+
+<main>
+  <div>
+    <section>
+      <h2>1. Incoming "call.completed" webhooks</h2>
+      <ul class="events" id="events"></ul>
+      <div class="row">
+        <button id="process">Process events</button>
+        <button class="ghost" id="reset">Reset</button>
+      </div>
+      <h2 style="margin-top:16px">Processing log</h2>
+      <div class="log" id="log">Nothing processed yet.</div>
+    </section>
+
+    <section style="margin-top:20px">
+      <h2>Try your own transcript</h2>
+      <textarea id="own" placeholder="Paste a call transcript (English or Hinglish), e.g. 'Agent: ... Customer: budget around 85 lakh, 2BHK in Sector 150, can visit this Saturday'"></textarea>
+      <div class="row"><button id="runOwn">Build lead card</button></div>
+    </section>
+  </div>
+
+  <section>
+    <h2>2. Lead cards for the sales team</h2>
+    <div id="cards"><p class="why">Click "Process events" to see the cards.</p></div>
+  </section>
+</main>
+
+<footer>
+  Built by Khushboo Malik as a quick prototype (rule-based extraction so it runs in the browser with no API key; in production the extraction step would be an LLM call with structured output, with these same rules kept as validators). Not affiliated with Huvo AI.
+</footer>
+
+<script>
+// ---------------------------------------------------------------------------
+// Mock webhook events. evt_102 is delivered twice on purpose (providers retry
+// when they don't get a 2xx in time), to show idempotent processing.
+// ---------------------------------------------------------------------------
+const EVENTS = [
+  { event_id: "evt_101", call_id: "call_9001", lead_name: "Rohit Sharma", phone: "+91 98xxxxxx21",
+    transcript: "Agent: Hi Rohit ji, calling about the Noida Sector 150 project you enquired about. Customer: Haan, I am looking for a 3BHK. Budget around 1.4 crore, max 1.5. Agent: When are you planning to buy? Customer: Within 2 months, my current lease ends in January. Agent: Would you like to visit the site? Customer: Yes, Saturday morning works, around 11." },
+  { event_id: "evt_102", call_id: "call_9002", lead_name: "Priya Nair", phone: "+91 99xxxxxx07",
+    transcript: "Agent: Hello Priya, this is about the Whitefield project. Customer: I'm just exploring right now. Maybe a 2BHK, budget 80 lakh or so. Agent: Any timeline? Customer: Not sure, maybe next year. Price feels a bit high honestly." },
+  { event_id: "evt_102", call_id: "call_9002", lead_name: "Priya Nair", phone: "+91 99xxxxxx07",
+    transcript: "(redelivered by provider)" },
+  { event_id: "evt_103", call_id: "call_9003", lead_name: "Amit Verma", phone: "+91 97xxxxxx55",
+    transcript: "Agent: Hi Amit, about the Gurgaon Dwarka Expressway project. Customer: Mujhe 3 BHK chahiye, budget 2 cr tak. Loan pre-approved hai. Kal shaam ko site visit kar sakta hoon, 5 baje. Agent: Great, I'll book it." }
+];
+
+// processed event IDs act like a unique index in the database.
+// In Django + Postgres this would be a UNIQUE constraint on event_id plus
+// "INSERT ... ON CONFLICT DO NOTHING", so two workers can't both win.
+let processed = new Set();
+let leads = [];
+
+function renderEvents() {
+  document.getElementById("events").innerHTML = EVENTS.map(e =>
+    `<li>${e.event_id} · ${e.call_id} · ${e.lead_name}</li>`).join("");
+}
+
+// ---------------------------------------------------------------------------
+// Extraction: small, readable rules. Each field returns a value and a
+// confidence so low-confidence fields can be flagged for human review.
+// ---------------------------------------------------------------------------
+function parseBudget(text) {
+  // Matches "1.4 crore", "2 cr", "80 lakh", "85L". Takes the highest amount mentioned as the ceiling.
+  const re = /(\d+(?:\.\d+)?)\s*(crore|cr|lakh|lakhs|lac|l)\b/gi;
+  let m, amounts = [];
+  while ((m = re.exec(text))) {
+    const n = parseFloat(m[1]);
+    const unit = m[2].toLowerCase();
+    amounts.push(unit.startsWith("c") ? n * 100 : n); // store in lakhs
+  }
+  if (!amounts.length) return { value: null, conf: 0 };
+  // "1.4 crore, max 1.5": a bare number after "max"/"tak" reuses the unit already said.
+  const bare = text.match(/(?:max|maximum|upto|up to)\s*(\d+(?:\.\d+)?)(?!\s*(?:crore|cr|lakh|lakhs|lac|l)\b)/i);
+  if (bare) {
+    const n = parseFloat(bare[1]);
+    amounts.push(Math.max(...amounts) >= 100 ? n * 100 : n);
+  }
+  const max = Math.max(...amounts);
+  const label = max >= 100 ? `₹${(max / 100).toFixed(2).replace(/\.?0+$/, "")} Cr` : `₹${max} L`;
+  return { value: label, lakhs: max, conf: /around|or so|tak|max/i.test(text) ? 0.8 : 0.9 };
+}
+
+function parseConfig(text) {
+  const m = text.match(/(\d)\s*-?\s*BHK/i);
+  return m ? { value: `${m[1]} BHK`, conf: 0.95 } : { value: null, conf: 0 };
+}
+
+function parseLocality(text) {
+  const m = text.match(/(Sector\s*\d+|Whitefield|Dwarka Expressway|Noida|Gurgaon|Gurugram|Thane|Hinjewadi)/i);
+  return m ? { value: m[1], conf: 0.7 } : { value: null, conf: 0 };
+}
+
+function parseTimeline(text) {
+  if (/within\s*(\d+)\s*month/i.test(text)) return { value: `Within ${RegExp.$1} months`, conf: 0.85, urgent: true };
+  if (/next year|not sure|exploring/i.test(text)) return { value: "Exploring / 6+ months", conf: 0.6, urgent: false };
+  if (/pre-?approved/i.test(text)) return { value: "Ready (loan pre-approved)", conf: 0.8, urgent: true };
+  return { value: null, conf: 0 };
+}
+
+function parseVisit(text) {
+  // English and Hinglish day words; keep it explicit so it is easy to extend.
+  const day = (text.match(/\b(today|tomorrow|kal|saturday|sunday|monday|tuesday|wednesday|thursday|friday)\b/i) || [])[1];
+  const time = (text.match(/\b(\d{1,2})\s*(am|pm|baje)?\b(?=[^\d]*$)/i) || [])[0];
+  const part = (text.match(/\b(morning|evening|shaam|subah)\b/i) || [])[1];
+  if (!day) return { value: null, conf: 0 };
+  const d = day.toLowerCase() === "kal" ? "Tomorrow" : day[0].toUpperCase() + day.slice(1).toLowerCase();
+  const p = part ? ({ shaam: "evening", subah: "morning" }[part.toLowerCase()] || part.toLowerCase()) : "";
+  return { value: [d, p, time ? `~${time.replace(/baje/i, "").trim()}` : ""].filter(Boolean).join(" "), conf: time ? 0.85 : 0.65 };
+}
+
+function parseObjection(text) {
+  if (/price.*high|expensive|costly|mehenga/i.test(text)) return { value: "Price", conf: 0.8 };
+  return { value: "None mentioned", conf: 0.7 };
+}
+
+// Score: simple, explainable points. Sales managers trust a score they can read.
+function score(f) {
+  let pts = 0, why = [];
+  if (f.visit.value) { pts += 3; why.push("agreed to a site visit"); }
+  if (f.timeline.urgent) { pts += 2; why.push("short buying timeline"); }
+  if (f.budget.value) { pts += 1; why.push("shared a budget"); }
+  if (f.objection.value === "Price") { pts -= 1; why.push("price objection"); }
+  const tier = pts >= 5 ? "Hot" : pts >= 2 ? "Warm" : "Cold";
+  return { tier, why };
+}
+
+function whatsappDraft(name, f, tier) {
+  const first = name.split(" ")[0];
+  if (f.visit.value) {
+    return `Hi ${first}, thanks for your time today! Your site visit is noted for ${f.visit.value}. ` +
+      `We'll keep ${f.config.value || "a few"} options ${f.budget.value ? "within " + f.budget.value : ""} ready for you. ` +
+      `Reply YES to confirm or share a better time.`;
+  }
+  if (tier === "Cold") {
+    return `Hi ${first}, thanks for speaking with us. Sharing the brochure and current offers for ${f.config.value || "the project"}. ` +
+      `No rush at all, reply anytime if you'd like a call back.`;
+  }
+  return `Hi ${first}, thanks for your time today. Would you like to see the project this weekend? Reply with a day that suits you.`;
+}
+
+function buildLead(name, phone, transcript, callId) {
+  const f = {
+    budget: parseBudget(transcript), config: parseConfig(transcript), locality: parseLocality(transcript),
+    timeline: parseTimeline(transcript), visit: parseVisit(transcript), objection: parseObjection(transcript)
+  };
+  const s = score(f);
+  return { name, phone, callId, f, ...s, wa: whatsappDraft(name, f, s.tier) };
+}
+
+// ---------------------------------------------------------------------------
+// Webhook handler: dedupe on event_id BEFORE doing any side effect
+// (creating the lead, sending WhatsApp). This is the core of exactly-once.
+// ---------------------------------------------------------------------------
+function processEvents() {
+  const log = [];
+  for (const e of EVENTS) {
+    if (processed.has(e.event_id)) {
+      log.push(`SKIP  ${e.event_id} already processed (duplicate delivery) -> 200 OK, no new lead, no 2nd WhatsApp`);
+      continue;
+    }
+    processed.add(e.event_id);
+    leads.push(buildLead(e.lead_name, e.phone, e.transcript, e.call_id));
+    log.push(`OK    ${e.event_id} -> lead created for ${e.lead_name}`);
+  }
+  document.getElementById("log").textContent = log.join("\n");
+  renderCards();
+}
+
+function row(label, field) {
+  const flag = field.value && field.conf < 0.75 ? `<span class="review">check</span>` : "";
+  return `<tr><td>${label}</td><td>${field.value || "<em>not mentioned</em>"}${flag}</td></tr>`;
+}
+
+function renderCards() {
+  const order = { Hot: 0, Warm: 1, Cold: 2 };
+  const sorted = [...leads].sort((a, b) => order[a.tier] - order[b.tier]);
+  document.getElementById("cards").innerHTML = sorted.map(l => `
+    <div class="lead">
+      <div class="lead-head"><strong>${l.name}</strong><span class="badge ${l.tier}">${l.tier}</span></div>
+      <div class="why">${l.phone} · ${l.callId} · why: ${l.why.join(", ") || "little intent shown"}</div>
+      <table>
+        ${row("Budget (ceiling)", l.f.budget)}
+        ${row("Configuration", l.f.config)}
+        ${row("Locality", l.f.locality)}
+        ${row("Timeline", l.f.timeline)}
+        ${row("Site visit", l.f.visit)}
+        ${row("Objection", l.f.objection)}
+      </table>
+      <div class="wa">${l.wa}</div>
+      <details><summary>Fields marked "check" had low confidence and go to a human before the message is sent.</summary></details>
+    </div>`).join("") || `<p class="why">No leads yet.</p>`;
+}
+
+document.getElementById("process").onclick = processEvents;
+document.getElementById("reset").onclick = () => { processed = new Set(); leads = []; document.getElementById("log").textContent = "Nothing processed yet."; renderCards(); };
+document.getElementById("runOwn").onclick = () => {
+  const t = document.getElementById("own").value.trim();
+  if (!t) return;
+  leads.push(buildLead("Your Lead", "—", t, "manual"));
+  renderCards();
+};
+renderEvents();
+</script>
+</body>
+</html>
